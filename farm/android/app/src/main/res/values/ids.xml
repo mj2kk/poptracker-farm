@@ -1,0 +1,11 @@
+<resources>
+    <item name="server_address" type="id"/>
+    <item name="enrollment_code" type="id"/>
+    <item name="connect" type="id"/>
+    <item name="automation_test" type="id"/>
+    <item name="test_increment_button" type="id"/>
+    <item name="test_counter_value" type="id"/>
+    <item name="test_list" type="id"/>
+    <item name="test_scenario_status" type="id"/>
+    <item name="test_reset" type="id"/>
+</resources>

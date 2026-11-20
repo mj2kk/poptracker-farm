@@ -1,0 +1,4 @@
+<resources>
+    <string name="test_service_name">PopTracker Farm · Automation Test</string>
+    <string name="test_service_summary">Проверяет кнопку, счётчик и список на тестовом экране PopTracker Farm. Службу можно выключить здесь в любой момент.</string>
+</resources>
