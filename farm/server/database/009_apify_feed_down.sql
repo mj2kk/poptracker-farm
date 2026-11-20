@@ -1,0 +1,1 @@
+DROP TABLE production_apify_feed_runs;
