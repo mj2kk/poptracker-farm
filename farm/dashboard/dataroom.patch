@@ -1,0 +1,53 @@
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -6,6 +6,7 @@
+ use App\Http\Controllers\DataRoomChatController;
+ use App\Http\Controllers\DataRoomChatKitController;
+ use App\Http\Controllers\DataRoomController;
++use App\Http\Controllers\FarmDashboardController;
+ use App\Http\Controllers\LoanAuthExplorerController;
+ use App\Http\Controllers\PopTrackerController;
+ use Illuminate\Support\Facades\Route;
+@@ -39,6 +40,16 @@
+         resource_path('reports/poptracker-database-report.html'),
+         ['Content-Type' => 'text/html; charset=UTF-8'],
+     ))->name('poptracker.database-report');
+-    Route::get('/dashboard', fn (): Response => Inertia::render('dashboard'))->name('dashboard');
++    Route::get('/dashboard', fn (): Response => Inertia::render('dashboard', [
++        'farmOperator' => FarmDashboardController::allowed(request()),
++    ]))->name('dashboard');
++    Route::get('/dashboard/phones', [FarmDashboardController::class, 'index'])->name('farm.index');
++    Route::get('/dashboard/phones/production', [FarmDashboardController::class, 'production'])->name('farm.production');
++    Route::post('/dashboard/phones/production/jobs', [FarmDashboardController::class, 'submit'])->middleware('throttle:30,1')->name('farm.production.submit');
++    Route::post('/dashboard/phones/production/jobs/{id}/cancel', [FarmDashboardController::class, 'cancel'])->whereUuid('id')->middleware('throttle:30,1')->name('farm.production.cancel');
++    Route::post('/dashboard/phones/production/evaluations', [FarmDashboardController::class, 'evaluate'])->middleware('throttle:10,1')->name('farm.production.evaluate');
++    Route::post('/dashboard/phones/production/queue', [FarmDashboardController::class, 'queue'])->middleware('throttle:30,1')->name('farm.production.queue');
++    Route::get('/dashboard/phones/snapshot', [FarmDashboardController::class, 'snapshot'])->name('farm.snapshot');
++    Route::post('/dashboard/phones/tasks', [FarmDashboardController::class, 'store'])->middleware('throttle:30,1')->name('farm.tasks');
+     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
+ });
+--- a/resources/js/pages/dashboard.tsx
++++ b/resources/js/pages/dashboard.tsx
+@@ -5,7 +5,7 @@
+ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+ import type { SharedProps } from '@/types';
+ 
+-export default function Dashboard() {
++export default function Dashboard({ farmOperator }: { farmOperator: boolean }) {
+     const { auth, urls } = usePage<SharedProps>().props;
+     const logout = useForm({});
+ 
+@@ -50,6 +50,13 @@
+                         <p className="mt-2 text-sm leading-6 text-muted-foreground">Сборы TikTok ZA, публикации за неделю и каталог авторов.</p>
+                         <span className="mt-4 inline-block text-sm font-medium text-primary">Открыть PopTracker →</span>
+                     </Link>
++                    {farmOperator && (
++                        <Link href="/dashboard/phones" className="mt-4 block max-w-xl rounded-xl border bg-background p-6 hover:border-primary/40">
++                            <h2 className="text-xl font-semibold">Управление телефонами</h2>
++                            <p className="mt-2 text-sm leading-6 text-muted-foreground">Телефоны PopTracker Farm, состояние дисплеев и очередь заданий.</p>
++                            <span className="mt-4 inline-block text-sm font-medium text-primary">Открыть Farm →</span>
++                        </Link>
++                    )}
+                 </main>
+             </div>
+         </TooltipProvider>
