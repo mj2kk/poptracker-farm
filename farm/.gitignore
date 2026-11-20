@@ -1,0 +1,17 @@
+.DS_Store
+.gradle/
+.kotlin/
+build/
+local.properties
+*.jks
+*.keystore
+.idea/
+*.iml
+.env
+.env.*
+*.p12
+*.pfx
+*.pem
+__pycache__/
+*.pyc
+run-private.json
