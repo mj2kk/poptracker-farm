@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="cloud.poptracker.farm.geoexecutor.permission.OBSERVE" android:protectionLevel="signature" />
+    <uses-permission android:name="cloud.poptracker.farm.regionsource.permission.OBSERVE" />
+    <queries>
+        <package android:name="cloud.poptracker.farm" />
+        <package android:name="cloud.poptracker.farm.regionsource" />
+    </queries>
+    <application android:label="Farm GEO" android:allowBackup="false" android:usesCleartextTraffic="false">
+        <provider android:name=".GeoExecutorProvider" android:authorities="cloud.poptracker.farm.geoexecutor"
+            android:process=":executor" android:exported="true"
+            android:permission="cloud.poptracker.farm.geoexecutor.permission.OBSERVE" />
+    </application>
+</manifest>
