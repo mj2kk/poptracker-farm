@@ -1,0 +1,182 @@
+--- tasks.php
++++ tasks.php
+@@ -9,7 +9,8 @@
+ const EXECUTION_BUDGET_MS = 120_000;
+ const DELIVERY_GRACE_SECONDS = 900;
+ const ARCHIVE_COMMENTS_TASK = 'ARCHIVE_COMMENTS_V1';
+-const FRESH_GEO_TASK = 'FRESH_AUTHOR_GEO_V1';
++const TEST_REGION_TASK = 'GET_TEST_REGION_V1';
++require_once __DIR__.'/test_batch.php';
+ 
+ function isUuid(mixed $value): bool {
+     return is_string($value) && preg_match('/\A'.UUID_PATTERN.'\z/', $value) === 1;
+@@ -34,33 +35,16 @@
+ }
+ 
+ function createTask(PDO $db, string $device, string $type, mixed $payload): string {
+-    if (($device !== 'any' && !isUuid($device)) || !$payload instanceof stdClass) { reject(422, 'invalid_task'); }
+-    switch ($type) {
+-        case COLLECTION_TYPE:
+-            validateCollectionParameters($payload);
+-            break;
+-        case 'UI_TEST_SCENARIO':
+-            exactFields((array)$payload,['scenario']);
+-            if ($payload->scenario!==OWN_UI_SCENARIO) { reject(422,'invalid_scenario'); }
+-            break;
+-        case 'PING':
+-        case 'GET_DEVICE_STATUS':
+-            exactFields((array)$payload, []);
+-            break;
+-        case 'EXECUTE_TEST_TASK':
+-            exactFields((array)$payload, ['duration_ms']);
+-            if (!integerBetween($payload->duration_ms, 0, 5000)) { reject(422, 'invalid_duration'); }
+-            break;
+-        default:
+-            reject(422, 'unsupported_task');
++    if (!isUuid($device) || !in_array($type,[TEST_REGION_TASK,TEST_BATCH_TASK],true) || !$payload instanceof stdClass) {
++        reject(422, 'unsupported_test_task');
+     }
+-    $id = deviceId();
+-    $json = json_encode($payload,JSON_THROW_ON_ERROR);
+-    if ($device === 'any') {
+-        query($db,"INSERT INTO device_tasks (task_id,device_id,assignment_mode,type,payload_json,created_at,updated_at)
+-            VALUES (?,NULL,'any',?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",[$id,$type,$json]);
+-        return $id;
++    if ($type===TEST_BATCH_TASK) { testBatchMembers($payload); }
++    else {
++        exactFields((array)$payload, ['author_uid']);
++        if ($payload->author_uid !== 'test_author_001') { reject(422, 'invalid_test_author'); }
+     }
++    $id = $type===TEST_BATCH_TASK ? $payload->request_id : deviceId();
++    $json = json_encode($payload,JSON_THROW_ON_ERROR);
+     $insert = query($db, "INSERT INTO device_tasks (task_id,device_id,type,payload_json,created_at,updated_at)
+         SELECT ?,device_id,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6) FROM device_agents WHERE device_id=? AND revoked_at IS NULL",
+         [$id,$type,$json,$device]);
+@@ -69,66 +53,32 @@
+ }
+ 
+ // MySQL updates both rows atomically. No automatic re-execution of an expired attempt.
+-function expireTaskLeases(PDO $db, ?string $device = null, ?string $type = null): void {
++function expireTaskLeases(PDO $db, ?string $device = null): void {
+     $sql = "UPDATE device_tasks t JOIN device_task_attempts a ON a.task_id=t.task_id
+         LEFT JOIN device_task_attempts newer ON newer.task_id=t.task_id AND newer.attempt_no>a.attempt_no
+         SET t.status='failed',t.updated_at=UTC_TIMESTAMP(6),a.status='expired',a.completed_at=UTC_TIMESTAMP(),a.error_code='LEASE_EXPIRED'
+         WHERE t.status='leased' AND a.status='leased' AND newer.attempt_id IS NULL
+         AND COALESCE(a.deliver_until,a.lease_expires_at)<=UTC_TIMESTAMP()";
+-    $filters = [];
+-    if ($device !== null) { $sql .= ' AND t.device_id=?'; $filters[] = $device; }
+-    if ($type !== null) { $sql .= ' AND t.type=?'; $filters[] = $type; }
+-    query($db, $sql, $filters);
++    query($db, $sql.($device === null ? '' : ' AND t.device_id=?'), $device === null ? [] : [$device]);
+ }
+ 
+ function claimTask(PDO $db, string $device, array $data, bool $online = false): ?array {
+     exactFields($data, ['device_id','agent_version'], ['capabilities','result_protocol']);
+-    $v2 = array_key_exists('result_protocol',$data);
+-    if ($v2 && $data['result_protocol'] !== 2) { reject(422,'unsupported_result_protocol'); }
+-    $caps = array_key_exists('capabilities',$data) ? $data['capabilities'] : [];
+-    if (!is_array($caps) || count($caps)>4) { reject(422,'invalid_capabilities'); }
+-    $seen = [];
+-    foreach ($caps as $cap) {
+-        if (!in_array($cap,[OWN_UI_SCENARIO,COLLECTION_TYPE,ARCHIVE_COMMENTS_TASK,FRESH_GEO_TASK],true) || isset($seen[$cap])) { reject(422,'invalid_capabilities'); }
+-        $seen[$cap] = true;
+-    }
+-    if ($data['device_id'] !== $device) { reject(403, 'device_mismatch'); }
+-    $version = versionField($data, 'agent_version');
+-    $freshGeo = $online && $v2 && isset($seen[FRESH_GEO_TASK]);
+-    if ($freshGeo) {
+-        query($db,'UPDATE device_agents SET fresh_geo_seen_at=UTC_TIMESTAMP(6) WHERE device_id=?',[$device]);
+-    } elseif ($online && version_compare($version,'0.6.0','>=')) {
+-        query($db,'UPDATE device_agents SET fresh_geo_seen_at=NULL WHERE device_id=? AND fresh_geo_seen_at IS NOT NULL',[$device]);
+-    }
+-    if ($freshGeo) {
+-        $paused=query($db,'SELECT paused FROM production_state WHERE id=1 FOR SHARE')->fetchColumn();
+-        $freshGeo=$paused!==false && (int)$paused===0;
+-    }
+-    $supportsCollection = isset($seen[COLLECTION_TYPE]) && $v2;
+-    $archiveComments = $online && $v2 && isset($seen[ARCHIVE_COMMENTS_TASK]);
+-    if ($archiveComments) {
+-        query($db, 'UPDATE device_agents SET archive_comments_seen_at=UTC_TIMESTAMP(6) WHERE device_id=?', [$device]);
+-    }
+-    $supportsUi = isset($seen[OWN_UI_SCENARIO]) && preg_match('/^\d+\.\d+\.\d+$/D',$version)
+-        && version_compare($version,'0.3.0','>=');
++    if (($data['result_protocol'] ?? null) !== 2) { reject(422,'unsupported_result_protocol'); }
++    $caps=$data['capabilities']??null;
++    if (!is_array($caps) || !$caps || count($caps)>2 || count(array_filter($caps,'is_string'))!==count($caps) || count(array_unique($caps,SORT_REGULAR))!==count($caps)
++        || array_diff($caps,[TEST_REGION_TASK,TEST_BATCH_TASK])) { reject(422,'invalid_capabilities'); }
++    if ($data['device_id'] !== $device) { reject(403,'device_mismatch'); }
++    versionField($data, 'agent_version');
++    $v2 = true;
+     // dispatch already owns the authenticated device row. Claims for this device serialize.
+     expireTaskLeases($db, $device);
+     if (query($db, "SELECT task_id FROM device_tasks WHERE device_id=? AND status='leased' LIMIT 1 FOR UPDATE", [$device])->fetchColumn()) {
+         return null;
+     }
+-    $select = "SELECT task_id,type,payload_json,schema_version FROM device_tasks
+-        WHERE status='queued' AND type<>'ARCHIVE_COMMENTS_V1'
+-        AND (type<>'FRESH_AUTHOR_GEO_V1' OR (?=1 AND created_at>=UTC_TIMESTAMP()-INTERVAL 2 MINUTE)) AND (type<>'UI_TEST_SCENARIO' OR ?=1) AND (type<>'COLLECT_TEST_DATA' OR ?=1)";
+-    $order = " ORDER BY created_at,task_id LIMIT 1 FOR UPDATE SKIP LOCKED";
+-    $capabilities = [(int)$freshGeo,(int)$supportsUi,(int)$supportsCollection];
+-    $task = query($db,$select.' AND device_id=?'.$order,[...$capabilities,$device])->fetch();
+-    if (!$task && $online) {
+-        $task = query($db,$select.' AND device_id IS NULL'.$order,$capabilities)->fetch();
+-    }
+-    if (!$task && $archiveComments) {
+-        require_once __DIR__.'/production.php';
+-        $task = prodClaimPhoneComments($db, $device);
+-    }
++    $task = query($db, "SELECT task_id,type,payload_json,schema_version FROM device_tasks
++        WHERE device_id=? AND status='queued' AND ((type=? AND ?=1) OR (type=? AND ?=1))
++        ORDER BY created_at,task_id LIMIT 1 FOR UPDATE SKIP LOCKED", [$device,TEST_REGION_TASK,(int)in_array(TEST_REGION_TASK,$caps,true),TEST_BATCH_TASK,(int)in_array(TEST_BATCH_TASK,$caps,true)])->fetch();
+     if (!$task) { return null; }
+     $attempt = deviceId();
+     $lease = bin2hex(random_bytes(32));
+@@ -152,7 +102,7 @@
+     return is_string($s) && $s !== '' && strlen($s) <= $max && !preg_match('/[[:cntrl:]]/', $s);
+ }
+ 
+-function validateTaskOutput(string $type, object $payload, array $data, ?int $leasedAt=null): void {
++function validateTaskOutput(string $type, object $payload, array $data): void {
+     if (!taskTimestamp($data['completed_at'])) { reject(422, 'invalid_completed_at'); }
+     if ($type==='UI_TEST_SCENARIO' && $data['result']!==null) {
+         validateUiReport($data['result'],$data);
+@@ -169,9 +119,14 @@
+     $r = $data['result'];
+     if ($data['outcome'] !== 'succeeded' || !$r instanceof stdClass || $data['error'] !== null) { reject(422,'invalid_result'); }
+     switch ($type) {
+-        case FRESH_GEO_TASK:
+-            require_once __DIR__.'/fresh_geo.php';
+-            $valid=$leasedAt!==null && validFreshGeoReport($payload,$r,$leasedAt,time());
++        case TEST_BATCH_TASK:
++            validateTestBatchReport($payload,$r);
++            return;
++        case TEST_REGION_TASK:
++            exactFields((array)$r,['request_id','status','author_uid','region','source']);
++            $valid = isUuid($r->request_id) && $r->status === 'success'
++                && $r->author_uid === $payload->author_uid && $r->region === 'ZA'
++                && $r->source === 'synthetic_test_provider';
+             break;
+         case ARCHIVE_COMMENTS_TASK:
+             exactFields((array)$r, ['video_id','comments']);
+@@ -239,7 +194,7 @@
+     if (!isUuid($attempt) || !is_string($token) || !preg_match('/\A[a-f0-9]{64}\z/', $token)) { reject(422,'invalid_attempt'); }
+     $task = query($db,'SELECT type,payload_json,status FROM device_tasks WHERE task_id=? AND device_id=? FOR UPDATE', [$taskId,$device])->fetch();
+     if (!$task) { reject(404,'task_not_found'); }
+-    $a = query($db,'SELECT leased_at,status,lease_token_hash,result_digest,deliver_until,lease_expires_at<=UTC_TIMESTAMP() AS expired,
++    $a = query($db,'SELECT status,lease_token_hash,result_digest,deliver_until,lease_expires_at<=UTC_TIMESTAMP() AS expired,
+         deliver_until<=UTC_TIMESTAMP() AS delivery_expired
+         FROM device_task_attempts WHERE attempt_id=? AND task_id=? FOR UPDATE',[$attempt,$taskId])->fetch();
+     if (!$a || !hash_equals($a['lease_token_hash'],hash('sha256',$token,true))) { reject(403,'invalid_lease'); }
+@@ -261,8 +216,10 @@
+     }
+     if ($a['status'] !== 'leased' || $task['status'] !== 'leased') { reject(409,'attempt_closed'); }
+     $payload = json_decode($task['payload_json']);
+-    $leasedAt=$task['type']===FRESH_GEO_TASK ? strtotime($a['leased_at'].' UTC') : null;
+-    validateTaskOutput($task['type'],$payload,$data,$leasedAt);
++    validateTaskOutput($task['type'],$payload,$data);
++    if ($task['type'] === TEST_REGION_TASK && $data['outcome'] === 'succeeded' && $data['result']->request_id !== $taskId) {
++        reject(422, 'test_correlation_mismatch');
++    }
+     $timing = $data['execution_timing'] ?? null;
+     if ($v2) { validateExecutionTiming($timing,$data); }
+     $error = $data['error'];
