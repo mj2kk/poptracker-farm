@@ -2,6 +2,7 @@ package app.morphe.extension.tiktok.interaction;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
@@ -12,14 +13,13 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
 
 /**
- * ContentProvider that must live inside the research APK
+ * ContentProvider that lives inside the research APK
  * (com.zhiliaoapp.musically.poptrackergeo).
  *
- * Exposes the existing FullAuthorWorker / queryBatchAweme path
- * over the IPC contract expected by Farm GeoExecutor.
+ * Receives FRESH_AUTHOR_GEO_V1 batches from Farm GeoExecutor and
+ * drives the existing FullAuthorWorker / queryBatchAweme path.
  */
 public class RegionSourceProvider extends ContentProvider {
 
@@ -53,32 +53,50 @@ public class RegionSourceProvider extends ContentProvider {
             String requestId = batch.getString("request_id");
             JSONArray members = batch.getJSONArray("members");
 
-            // TODO: map members → FullAuthorWorker.Group and call execute()
-            // For now this skeleton returns a structure the Farm side will accept
-            // once the real call is wired.
+            // Build participants exactly as FullAuthorWorker expects
+            List<FullAuthorWorker.Participant> participants = new ArrayList<>();
+            for (int i = 0; i < members.length(); i++) {
+                JSONObject m = members.getJSONObject(i);
+                String role = m.getString("role");
+                participants.add(new FullAuthorWorker.Participant(
+                        m.getString("uid"),
+                        m.getString("vid"),
+                        m.optString("handle", ""),
+                        "control".equals(role) ? "anchor" : "target"
+                ));
+            }
+
+            Context ctx = getContext();
+            if (ctx == null) throw new IllegalStateException("no_context");
+
+            // Real execution — uses the same Factory + execute + inspect + evaluate path
+            FullAuthorWorker.Outcome outcome = FullAuthorWorker.executeDynamicBatch(ctx, participants);
 
             JSONArray observations = new JSONArray();
             long now = System.currentTimeMillis();
 
-            for (int i = 0; i < members.length(); i++) {
-                JSONObject m = members.getJSONObject(i);
-                String uid = m.getString("uid");
-                String vid = m.getString("vid");
-                String role = m.getString("role");
+            for (FullAuthorWorker.Participant p : participants) {
+                JSONObject model = outcome.models.get(p.video);
+                JSONObject raw = outcome.raw.get(p.video);
 
-                // Placeholder — replace with real RawAuthorFacts / Outcome data
-                String region = "control".equals(role)
-                        ? ("7632224740756898837".equals(uid) ? "AU" : "ZA")
-                        : null;
+                String region = null;
+                if (model != null && model.has("region")) {
+                    JSONObject rf = model.getJSONObject("region");
+                    if ("value".equals(rf.optString("status"))) {
+                        Object v = rf.opt("raw");
+                        if (v instanceof String) region = ((String) v).toUpperCase(Locale.ROOT);
+                    }
+                }
 
+                // Controls must have a matching region; targets may be null
                 JSONObject obs = new JSONObject();
-                obs.put("uid", uid);
-                obs.put("vid", vid);
+                obs.put("uid", p.uid);
+                obs.put("vid", p.video);
                 obs.put("field", "author.region");
                 obs.put("raw_region", region == null ? JSONObject.NULL : region);
                 obs.put("typed_region", region == null ? JSONObject.NULL : region);
                 obs.put("observed_ms", now);
-                obs.put("evidence_sha256", sha256(uid + "|" + vid + "|" + now));
+                obs.put("evidence_sha256", sha256(p.uid + "|" + p.video + "|" + now + "|" + (region == null ? "" : region)));
                 observations.put(obs);
             }
 
@@ -98,8 +116,14 @@ public class RegionSourceProvider extends ContentProvider {
     }
 
     private boolean isReady() {
-        // TODO: call NativeForegroundGuard.observe() and check ReuseAudioApi availability
-        return true;
+        try {
+            Context ctx = getContext();
+            if (ctx == null) return false;
+            JSONObject state = NativeForegroundGuard.observe(ctx);
+            return state.optBoolean("dispatch_ready", false);
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private static String sha256(String s) throws Exception {
