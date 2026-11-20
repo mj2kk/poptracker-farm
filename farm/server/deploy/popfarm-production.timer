@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the PopTracker collection queue
+
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=15s
+AccuracySec=2s
+Unit=popfarm-production.service
+
+[Install]
+WantedBy=timers.target

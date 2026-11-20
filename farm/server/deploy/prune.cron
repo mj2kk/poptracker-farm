@@ -1,0 +1,1 @@
+17 3 * * * popfarm /usr/bin/php '/PopTracker Farm/server/bin/farm.php' prune

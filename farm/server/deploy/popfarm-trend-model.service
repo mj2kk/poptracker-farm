@@ -1,0 +1,30 @@
+[Unit]
+Description=PopTracker local trend inference
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=popfarm-trend
+Group=popfarm
+RuntimeDirectory=popfarm-trend
+RuntimeDirectoryMode=0750
+UMask=0007
+Environment=LD_LIBRARY_PATH=/opt/popfarm-trend/gomp/usr/lib/x86_64-linux-gnu
+ExecStart=/opt/popfarm-trend/llama-b12556/llama-server --model /opt/popfarm-trend/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf --alias poptracker-qwen25-6a1a2eb6 --host /run/popfarm-trend/model.sock --threads 2 --threads-batch 2 --parallel 1 --ctx-size 2048 --batch-size 128 --ubatch-size 128 --gpu-layers 0 --poll 0 --sleep-idle-seconds 180 --offline --no-ui --no-slots --no-warmup
+CPUQuota=150%
+MemoryMax=2600M
+Nice=10
+TasksMax=48
+Restart=on-failure
+RestartSec=10
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+InaccessiblePaths=-/etc/poptracker-farm -/var/www -/var/lib/mysql "-/PopTracker Farm"
+
+[Install]
+WantedBy=multi-user.target

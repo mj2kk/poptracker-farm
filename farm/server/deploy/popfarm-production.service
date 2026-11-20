@@ -1,0 +1,15 @@
+[Unit]
+Description=PopTracker collection queue
+After=mysql.service
+
+[Service]
+Type=oneshot
+User=popfarm
+Group=popfarm
+WorkingDirectory=/PopTracker Farm/server
+ExecStart=/usr/bin/php "/PopTracker Farm/server/bin/production-tick.php"
+TimeoutStartSec=4min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
