@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="cloud.poptracker.farm.testprovider.permission.GET_TEST_REGION"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="cloud.poptracker.farm.testprovider.permission.GET_TEST_REGION" />
+    <queries><package android:name="cloud.poptracker.farm.ipcpoc" /></queries>
+    <application android:label="Farm · Synthetic GEO Provider" android:allowBackup="false">
+        <provider android:name=".TestBatchProvider" android:authorities="cloud.poptracker.farm.testprovider.batches"
+            android:exported="true" android:process=":batches"
+            android:permission="cloud.poptracker.farm.testprovider.permission.GET_TEST_REGION" />
+        <service android:name=".TestRegionService" android:exported="true" android:process=":ipc"
+            android:permission="cloud.poptracker.farm.testprovider.permission.GET_TEST_REGION" />
+    </application>
+</manifest>
