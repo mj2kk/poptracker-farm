@@ -1,0 +1,8 @@
+<!-- Add inside <application> of the research APK (poptrackergeo) -->
+<provider
+    android:name="app.morphe.extension.tiktok.interaction.RegionSourceProvider"
+    android:authorities="cloud.poptracker.farm.regionsource"
+    android:exported="true"
+    android:grantUriPermissions="false" />
+
+<!-- Optional: restrict to Farm package only via a custom permission or by checking calling UID inside call() -->
